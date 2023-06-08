@@ -4,7 +4,7 @@ This repository contains a CloudFormation stack for deploying resources using Co
 
 ## Repository Structure
 
-- `teststack.yaml`: Template file that describes the infrastructure to deploy.
+- `/stacks/teststack.yaml`: Template file that describes the infrastructure to deploy.
 
 
 ## Requirements and Dependencies
@@ -20,7 +20,7 @@ Follow these steps to deploy the resources using the CloudFormation stack:
 
 1. Clone the repository: `git clone https://github.com/your-username/your-repo.git`.
 2. Review the `teststack.yaml` file and make the necessary modifications according to your requirements.
-3. Deploy the stack using the AWS CLI command: `aws cloudformation create-stack --stack-name <stack-name> --template-body file://teststack.yaml`.
+3. Deploy the stack using the AWS CLI command: `aws cloudformation create-stack --stack-name <stack-name> --template-body file://stacks/teststack.yaml`.
 4. Wait for the deployment to complete and verify it in the AWS console.
 
 ## Contribution
