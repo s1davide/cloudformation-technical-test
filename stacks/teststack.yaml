@@ -1,12 +1,12 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: Stack para prueba tecnica
+Description: Test Cloud Formation Stack
 Resources:
   MyEC2Instance:
     Type: AWS::EC2::Instance
     Properties:
-      ImageId: ami-053b0d53c279acc90  # ImageId de la imagen de Ubuntu 22.04 LTS
+      ImageId: ami-053b0d53c279acc90  # ImageId of Ubuntu 22.04 LTS image
       InstanceType: t2.micro
       SubnetId: subnet-0f06d4a049090d708
       Tags:
         - Key: Name
-          Value: test_ec2
+          Value: test_ec2_new_name

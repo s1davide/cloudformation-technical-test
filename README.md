@@ -1,6 +1,6 @@
 # TestStack
 
-This repository contains a CloudFormation stack for deploying resources using CodePipeline and CodeBuild.
+This repository contains a CloudFormation stack for deploying resources using CodePipeline and CodeBuild. It has a connection to codepipeline, so every change in the code initializes the execution of the pipeline in CodePipeline, which initializes or updates the stacks and deploys the resources.
 
 ## Repository Structure
 
