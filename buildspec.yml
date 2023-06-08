@@ -1,0 +1,52 @@
+version: 0.2
+phases:
+  install:
+    runtime-versions:
+        python: 3.11
+  pre_build:
+    commands:
+        - env
+        - aws --version
+        - aws sts get-caller-identity
+        - pip install --quiet --upgrade pip
+        - pip install --quiet --upgrade cfn-lint
+        - cfn-lint --version
+  build:
+    commands:
+        - |
+          set -eux
+          
+          PACKAGED_DIR="/tmp/packaged"
+          rm -rf "$PACKAGED_DIR"
+          mkdir -p "$PACKAGED_DIR"
+          
+          TEMPLATES="$(find ./stacks -type f)"
+          echo "Found CloudFormation templates: $TEMPLATES"
+          echo "Running cfn-lint"
+          # cfn-lint rules: https://github.com/aws-cloudformation/cfn-lint/blob/main/docs/rules.md
+          cfn-lint -I $TEMPLATES --ignore-checks W3002
+          
+          for TEMPLATE in $TEMPLATES; do
+            FILENAME="$(basename "$TEMPLATE")"
+            STACK_NAME="${FILENAME%.*}"
+            echo "Packaging template '$TEMPLATE'"
+            aws cloudformation package --template-file "$TEMPLATE" --s3-bucket "$S3_BUCKET_CLOUDFORMATION" --output-template-file "${PACKAGED_DIR}/${FILENAME}"
+            echo "Deploying template '${PACKAGED_DIR}/${FILENAME}' as stack '$STACK_NAME'"
+            aws cloudformation deploy --template-file "${PACKAGED_DIR}/${FILENAME}" --stack-name "$STACK_NAME" --capabilities CAPABILITY_NAMED_IAM --no-fail-on-empty-changeset
+          done
+    post_build:
+      commands:
+        - |
+          for TEMPLATE in $TEMPLATES; do
+            STACKNAME=teststack
+            RESPONSE="$(aws cloudformation describe-stacks --stack-name "$STACKNAME")"
+            if [[ $RESPONSE =~ "$STACKNAME"  ]]; then
+            echo "Stack "$STACKNAME" found"
+            
+            else
+            echo "stack "$STACKNAME"  not found"
+            fi
+            if [[ $RESPONSE =~ "REVIEW_IN_PROGRESS"  ]]; then
+            echo "Stack "$STACKNAME" not executed"
+            fi
+          done
