@@ -23,6 +23,8 @@ Follow these steps to deploy the resources using the CloudFormation stack:
 3. Deploy the stack using the AWS CLI command: `aws cloudformation create-stack --stack-name <stack-name> --template-body file://stacks/teststack.yaml`.
 4. Wait for the deployment to complete and verify it in the AWS console.
 
+### Update Database Credentials
+
 ## Contribution
 
 If you wish to contribute to the project, follow these guidelines:

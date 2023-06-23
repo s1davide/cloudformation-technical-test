@@ -1,12 +1,472 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: Test Cloud Formation Stack
+Parameters:
+  SecretId:
+    Type: String
+    Description: Name of secret containing the database name, username and password
+    Default: testSecret/TestApp/psql  
+  InitialTestRDSIdentifierKey:
+    Type: String
+    Description: Identifier key to found database in lambda and update change secrets in Secret Manager
+    Default: INITIAL_RDS_IDENTIFIER
+  InitialTestRDSIdentifierValue:
+    Type: String
+    Description: Identifier value to found database in lambda and update change secrets in Secret Manager
+    Default: INITIAL_RDS_VALUE
 Resources:
+  TestVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      CidrBlock: 10.0.0.0/16
+      Tags:
+        - Key: Name
+          Value: Test-VPC
+
+  MySecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group test
+      VpcId: !Ref TestVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          CidrIp: 0.0.0.0/0
+
+  SubnetPublicTest1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref TestVPC
+      CidrBlock: 10.0.0.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: us-east-1a
+      Tags:
+        - Key: Name
+          Value: test_subnet1
+
+  SubnetPublicTest2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref TestVPC
+      CidrBlock: 10.0.1.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: us-east-1b
+      Tags:
+        - Key: Name
+          Value: test_subnet2
+
+  TestInternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: Test_internet_gateway
+  TestInternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref TestVPC
+      InternetGatewayId: !Ref TestInternetGateway
+
+  TestRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref TestVPC
+      Tags:
+        - Key: Name
+          Value: TestRouteTable
+
+  TestSubnetAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref TestRouteTable
+      SubnetId: !Ref SubnetPublicTest1
+
+  TestSubnetAssociation2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref TestRouteTable
+      SubnetId: !Ref SubnetPublicTest2
+
+  TestRouteForRouteTable:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref TestRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref TestInternetGateway
+ 
+
   MyEC2Instance:
     Type: AWS::EC2::Instance
     Properties:
-      ImageId: ami-053b0d53c279acc90  # ImageId of Ubuntu 22.04 LTS image
+      ImageId: ami-053b0d53c279acc90 # ImageId of Ubuntu 22.04 LTS image
       InstanceType: t2.micro
-      SubnetId: subnet-0f06d4a049090d708
+      SubnetId: !Ref SubnetPublicTest1
+      SecurityGroupIds:
+        - !Ref MySecurityGroup
+      KeyName: test_keypair
       Tags:
         - Key: Name
-          Value: test_ec2_new_name
+          Value: test_ec2_new_name2
+      UserData:
+        Fn::Base64: |       
+            Content-Type: multipart/mixed; boundary="//"
+            MIME-Version: 1.0
+
+            --//
+            Content-Type: text/cloud-config; charset="us-ascii"
+            MIME-Version: 1.0
+            Content-Transfer-Encoding: 7bit
+            Content-Disposition: attachment; filename="cloud-config.txt"
+
+            #cloud-config
+            cloud_final_modules:
+            - [scripts-user, always]
+
+            --//
+            Content-Type: text/x-shellscript; charset="us-ascii"
+            MIME-Version: 1.0
+            Content-Transfer-Encoding: 7bit
+            Content-Disposition: attachment; filename="userdata.txt"
+                
+            #!/bin/bash
+            sudo rm -r /var/lib/cloud/instances/            
+            su - ubuntu
+            export HOME=/home/ubuntu
+            export NPM_CONFIG_PREFIX=$HOME/.npm-global
+            sudo apt-get update -y
+            sudo apt install -y nginx
+            /bin/echo 'server {
+              listen 80 default_server;
+              listen [::]:80 default_server;
+              server_name _;
+              location / {
+                      proxy_pass http://127.0.0.1:3000;
+                    }
+              }' > /etc/nginx/sites-enabled/default 
+            sudo service nginx restart          
+            curl -fsSL https://deb.nodesource.com/setup_16.x | sudo -E bash - &&\
+            sudo apt-get install -y nodejs                          
+            if [[ ! -e $NPM_CONFIG_PREFIX ]]; then              
+              /bin/mkdir $NPM_CONFIG_PREFIX      
+              echo "export PATH=$NPM_CONFIG_PREFIX/bin:$PATH" >> $HOME/.profile
+              echo "npm config set prefix '$NPM_CONFIG_PREFIX'" >> $HOME/.profile
+              source $HOME/.profile
+              echo Installing required node packages
+              echo Install pm2
+              npm i -g pm2
+              echo Install yarn
+              npm install -g yarn                
+            fi            
+            --//--
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: test-load-balancer
+      Subnets:
+        - !Ref SubnetPublicTest1
+        - !Ref SubnetPublicTest2
+      SecurityGroups:
+        - !Ref MySecurityGroup
+
+  TestDBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: My DB subnet group
+      SubnetIds:
+        - !Ref SubnetPublicTest1
+        - !Ref SubnetPublicTest2
+
+  TestDBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for RDS PostgreSQL instance
+      VpcId: !Ref TestVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          CidrIp: 0.0.0.0/0
+
+  RDSDBInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      AllocatedStorage: "20"
+      DBInstanceIdentifier:  !Sub "{{resolve:secretsmanager:${SecretId}:SecretString:dbInstanceIdentifier}}"
+      Engine: postgres
+      EngineVersion: "14.7"
+      ManageMasterUserPassword: false      
+      MasterUsername: !Sub "{{resolve:secretsmanager:${SecretId}:SecretString:username}}"      
+      MasterUserPassword: !Sub "{{resolve:secretsmanager:${SecretId}:SecretString:password}}"      
+      VPCSecurityGroups:
+        - !Ref TestDBSecurityGroup
+      DBSubnetGroupName: !Ref TestDBSubnetGroup
+      DBInstanceClass: db.t3.micro
+      StorageType: gp2
+      PubliclyAccessible: true
+      EnableIAMDatabaseAuthentication: true
+      Tags:
+        - Key: !Ref InitialTestRDSIdentifierKey
+          Value: !Ref InitialTestRDSIdentifierValue
+  
+  BindSecretWithDb:
+    Type: AWS::SecretsManager::SecretTargetAttachment
+    Properties: 
+      SecretId: !Ref SecretId
+      TargetId: !Ref RDSDBInstance
+      TargetType: AWS::RDS::DBInstance
+
+  # CloudTrail Trail
+
+  CloudTrailBucket:
+    Type: AWS::S3::Bucket    
+    Properties:
+      BucketName: test-for-cloudtrail-bucket-test
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldFiles
+            Status: Enabled
+            ExpirationInDays: 1
+
+  CloudTrailBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref CloudTrailBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowCloudTrailAclCheck
+            Effect: Allow
+            Principal:
+              Service: "cloudtrail.amazonaws.com"
+            Action: "s3:GetBucketAcl"
+            Resource: !Join ["", ["arn:aws:s3:::", !Ref CloudTrailBucket]]           
+            
+          - Sid: AllowCloudTrailToWrite
+            Effect: Allow
+            Principal:
+              Service: "cloudtrail.amazonaws.com"
+            Action: "s3:PutObject"
+            Resource:
+              !Join [
+                "",
+                [
+                  "arn:aws:s3:::", !Ref CloudTrailBucket, "/AWSLogs/", !Ref AWS::AccountId, "/*",
+                ],
+              ]
+
+  TestCloudTrail:
+    Type: AWS::CloudTrail::Trail
+    Properties:
+      TrailName: test-cloudtrail-trail
+      S3BucketName: !Ref CloudTrailBucket
+      IsLogging: true
+      EnableLogFileValidation: false
+      IsMultiRegionTrail: false
+
+ 
+  MyEventBridgeRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: test_event_bridge_rule
+      Description: My EventBridge Rule
+      EventPattern:
+        source:
+          - aws.secretsmanager
+        detail-type:
+          - "AWS API Call via CloudTrail"
+        detail:
+          eventSource: 
+            - secretsmanager.amazonaws.com
+          eventName:
+            - PutSecretValue  
+          responseElements:
+            "$or":
+              - arn:
+                - prefix: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${SecretId}"
+              - aRN:
+                - prefix: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${SecretId}"
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt MyLambdaFunction.Arn
+          Id: MyLambdaTarget
+
+  MyLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt MyLambdaFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt MyEventBridgeRule.Arn
+
+  MyLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: MyLambdaFunction
+      Runtime: python3.9
+      Handler: index.lambda_handler
+      Code:
+        ZipFile: |
+          import json
+          import logging
+          import os
+          import re
+          import boto3
+          import botocore
+          import json
+          from aws_lambda_powertools import Logger
+
+          logger = Logger()
+
+          class HandleSecretChange():
+              def __init__(self) -> None:
+                  self.boto3_session=boto3.Session()
+                  self.client_secrets_manager= self.boto3_session.client("secretsmanager")
+                  self.client_rds = boto3.client('rds')
+                  self.rds_tag_key,self.rds_tag_value=os.environ["INITIAL_DATABASE_IDENTIFIER_KEY"], os.environ["INITIAL_DATABASE_IDENTIFIER_VALUE"] 
+                  self.secret_id=self.secret_id=os.environ["SECRET_ID"]
+                  self.current_secrets=json.loads(self.client_secrets_manager.get_secret_value(
+                      SecretId=self.secret_id
+                  )["SecretString"])
+                  rds= self.client_rds.describe_db_instances()
+                  self.instance_db = [instance for instance in rds["DBInstances"]
+                      if any(
+                          tag['Key'] == self.rds_tag_key and tag['Value'] == self.rds_tag_value
+                          for tag in instance.get('TagList', [])
+                      )][0]
+              
+              def changed_static_credential(self):
+                  if self.instance_db["MasterUsername"]!= self.current_secrets["username"]:
+                      return True
+                  if self.instance_db["Engine"]!= self.current_secrets["engine"]:
+                      return True
+                  if self.instance_db["Endpoint"]["Port"]!= self.current_secrets["port"]:
+                      return True
+                  
+              def restore_database_static_secret(self):
+                  if self.changed_static_credential():
+                      secrets_to_restore=self.current_secrets|{"username":self.instance_db["MasterUsername"]}
+                      secrets_to_restore=secrets_to_restore|{"engine":self.instance_db["Engine"]}
+                      secrets_to_restore=secrets_to_restore|{"port":self.instance_db["Endpoint"]["Port"]}
+                      self.client_secrets_manager.update_secret(
+                          SecretId=self.secret_id,
+                          SecretString=json.dumps(secrets_to_restore)
+                      )
+
+              def restore_previous_secret_version(self):
+                  previous_secrets= self.client_secrets_manager.get_secret_value(
+                  SecretId=self.secret_id,
+                  VersionStage="AWSPREVIOUS"
+                  )
+                  self.client_secrets_manager.update_secret(
+                              SecretId=self.secret_id,
+                              SecretString=previous_secrets["SecretString"]
+                  )
+
+              def set_new_hostname_in_secrets(self):
+                  new_hostname=re.sub(r"^[^.]+",self.current_secrets["dbInstanceIdentifier"],self.instance_db["Endpoint"]["Address"])
+                  secrets=self.current_secrets|{"host": new_hostname}
+                  self.client_secrets_manager.update_secret(
+                          SecretId=self.secret_id,
+                          SecretString=json.dumps(secrets)
+                  )
+              
+              def update_database_secret_value(self):
+                  try:
+                      response_rds_update=self.client_rds.modify_db_instance(
+                                  DBInstanceIdentifier=self.instance_db["DBInstanceIdentifier"],
+                                  NewDBInstanceIdentifier=self.current_secrets["dbInstanceIdentifier"],
+                                  MasterUserPassword=self.current_secrets["password"],
+                                  ApplyImmediately=True
+                          )
+                      self.restore_database_static_secret()
+                      self.set_new_hostname_in_secrets()
+                  except botocore.exceptions.ClientError as err:    
+                      logger.error(err)
+                      self.restore_previous_secret_version()
+                      self.restore_database_static_secret()                      
+
+          def lambda_handler(event, context):
+              handle_secret_change=HandleSecretChange()
+              handle_secret_change.update_database_secret_value()
+              return {
+                  'statusCode': 200,
+                  'body': json.dumps('lambda function execution completed')
+              }     
+      Timeout: 300
+      Environment:
+        Variables:
+          SECRET_ID: !Ref SecretId
+          INITIAL_DATABASE_IDENTIFIER_KEY: !Ref InitialTestRDSIdentifierKey
+          INITIAL_DATABASE_IDENTIFIER_VALUE: !Ref InitialTestRDSIdentifierValue
+      Layers:
+        - arn:aws:lambda:us-east-1:017000801446:layer:AWSLambdaPowertoolsPythonV2:32
+      Role: !GetAtt TestLambdaRole.Arn
+
+  TestLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: TestLambdaRoleName
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: MyLambdaPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                  - secretsmanager:UpdateSecret
+                Resource: !Sub arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${SecretId}*
+              - Effect: Allow
+                Action:
+                  - rds:DescribeDBInstances
+                  - rds:ModifyDBInstance
+                Resource: 
+                  - !Sub arn:aws:rds:${AWS::Region}:${AWS::AccountId}:db:*
