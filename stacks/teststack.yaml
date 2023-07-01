@@ -13,6 +13,12 @@ Parameters:
     Type: AWS::SSM::Parameter::Value<String>
     Description: Ec2 keypair to connect EC2 via SSH
     Default:  EC2KeyPair
+
+  AvailabilityZones:
+    Type: List<AWS::EC2::AvailabilityZone::Name>
+    Description: Availavility Zones List
+    Default: "us-east-1a, us-east-1b"
+    
   InitialTestRDSIdentifierKey:
     Type: String
     Description: Identifier key to found database in lambda and update change secrets in Secret Manager
@@ -72,7 +78,7 @@ Resources:
       VpcId: !Ref TestVPC
       CidrBlock: 10.0.0.0/24
       MapPublicIpOnLaunch: true
-      AvailabilityZone: us-east-1a
+      AvailabilityZone: !Select ["0", !Ref AvailabilityZones]
       Tags:
         - Key: Name
           Value: !Sub "${AWS::StackName}-subnet1"
@@ -83,7 +89,7 @@ Resources:
       VpcId: !Ref TestVPC
       CidrBlock: 10.0.1.0/24
       MapPublicIpOnLaunch: true
-      AvailabilityZone: us-east-1b
+      AvailabilityZone: !Select ["1", !Ref AvailabilityZones]
       Tags:
         - Key: Name
           Value: !Sub "${AWS::StackName}-subnet2"
