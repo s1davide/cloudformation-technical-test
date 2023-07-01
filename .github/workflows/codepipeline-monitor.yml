@@ -12,7 +12,7 @@ on:
           - main
 
 jobs:
-  monitor:    
+  codepipeline-status:    
     runs-on: ubuntu-latest   
     permissions:
         id-token: write   # This is required for requesting the JWT
@@ -24,7 +24,7 @@ jobs:
       - name: Set up AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
         with:
-            role-to-assume: ${{ secrets.ROLE_TO_ASSUME }}
+            role-to-assume: ${{ secrets.ARN_ROLE_TO_ASSUME }}
             aws-region: ${{ secrets.REGION }}
 
       - name: Get CodePipeline status
