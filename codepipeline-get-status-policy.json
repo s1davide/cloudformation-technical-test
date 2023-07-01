@@ -1,0 +1,20 @@
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Action": [
+                "codepipeline:GetPipeline",
+                "codepipeline:GetPipelineState",
+                "codepipeline:GetPipelineExecution",
+                "codepipeline:ListPipelineExecutions",
+                "codepipeline:ListActionExecutions",
+                "codepipeline:ListActionTypes",
+                "codepipeline:ListPipelines",
+                "codepipeline:ListTagsForResource"
+            ],
+            "Effect": "Allow",
+            "Resource": "*"
+        }
+     
+    ]
+}

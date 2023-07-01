@@ -30,7 +30,7 @@ phases:
             FILENAME="$(basename "$TEMPLATE")"
             STACK_NAME="${FILENAME%.*}"
             echo "Packaging template '$TEMPLATE'"
-            aws cloudformation package --template-file "$TEMPLATE" --s3-bucket "$S3_BUCKET_CLOUDFORMATION" --output-template-file "${PACKAGED_DIR}/${FILENAME}"
+            aws cloudformation package --template-file "$TEMPLATE" --s3-bucket "$S3_BUCKET_ARTIFACTS" --output-template-file "${PACKAGED_DIR}/${FILENAME}"
             echo "Deploying template '${PACKAGED_DIR}/${FILENAME}' as stack '$STACK_NAME'"
             aws cloudformation deploy --template-file "${PACKAGED_DIR}/${FILENAME}" --stack-name "$STACK_NAME" --capabilities CAPABILITY_NAMED_IAM --no-fail-on-empty-changeset
           done

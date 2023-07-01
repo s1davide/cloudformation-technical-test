@@ -2,9 +2,17 @@ AWSTemplateFormatVersion: "2010-09-09"
 Description: Test Cloud Formation Stack
 Parameters:
   SecretId:
-    Type: String
+    Type: AWS::SSM::Parameter::Value<String>
     Description: Name of secret containing the database name, username and password
-    Default: testSecret/TestApp/psql  
+    Default: SecretId
+  SecretArn:
+    Type: AWS::SSM::Parameter::Value<String>
+    Description: Name of secret containing the database name, username and password
+    Default: SecretArn
+  KeyPairForEC2Name:
+    Type: AWS::SSM::Parameter::Value<String>
+    Description: Ec2 keypair to connect EC2 via SSH
+    Default:  EC2KeyPair
   InitialTestRDSIdentifierKey:
     Type: String
     Description: Identifier key to found database in lambda and update change secrets in Secret Manager
@@ -22,11 +30,12 @@ Resources:
       CidrBlock: 10.0.0.0/16
       Tags:
         - Key: Name
-          Value: Test-VPC
+          Value: !Sub "${AWS::StackName}-Test-VPC"
 
   MySecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
+      GroupName: !Sub "${AWS::StackName}-EC2SecurityGroup"
       GroupDescription: Security group test
       VpcId: !Ref TestVPC
       SecurityGroupIngress:
@@ -42,10 +51,6 @@ Resources:
           FromPort: 443
           ToPort: 443
           CidrIp: 0.0.0.0/0
-        - IpProtocol: tcp
-          FromPort: 5432
-          ToPort: 5432
-          CidrIp: 0.0.0.0/0
       SecurityGroupEgress:
         - IpProtocol: tcp
           FromPort: 22
@@ -59,10 +64,7 @@ Resources:
           FromPort: 443
           ToPort: 443
           CidrIp: 0.0.0.0/0
-        - IpProtocol: tcp
-          FromPort: 5432
-          ToPort: 5432
-          CidrIp: 0.0.0.0/0
+        
 
   SubnetPublicTest1:
     Type: AWS::EC2::Subnet
@@ -73,7 +75,7 @@ Resources:
       AvailabilityZone: us-east-1a
       Tags:
         - Key: Name
-          Value: test_subnet1
+          Value: !Sub "${AWS::StackName}-subnet1"
 
   SubnetPublicTest2:
     Type: AWS::EC2::Subnet
@@ -84,14 +86,15 @@ Resources:
       AvailabilityZone: us-east-1b
       Tags:
         - Key: Name
-          Value: test_subnet2
+          Value: !Sub "${AWS::StackName}-subnet2"
 
   TestInternetGateway:
     Type: AWS::EC2::InternetGateway
     Properties:
       Tags:
         - Key: Name
-          Value: Test_internet_gateway
+          Value: !Sub "${AWS::StackName}-internet_gateway"
+
   TestInternetGatewayAttachment:
     Type: AWS::EC2::VPCGatewayAttachment
     Properties:
@@ -104,7 +107,7 @@ Resources:
       VpcId: !Ref TestVPC
       Tags:
         - Key: Name
-          Value: TestRouteTable
+          Value: !Sub "${AWS::StackName}-TestRouteTable"
 
   TestSubnetAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
@@ -134,10 +137,12 @@ Resources:
       SubnetId: !Ref SubnetPublicTest1
       SecurityGroupIds:
         - !Ref MySecurityGroup
-      KeyName: test_keypair
+        - !Ref TestDBSecurityGroup
+      KeyName: !Ref KeyPairForEC2Name
+      IamInstanceProfile: !Ref InstanceProfileEc2ForRole
       Tags:
         - Key: Name
-          Value: test_ec2_new_name2
+          Value: !Sub "${AWS::StackName}-ec2_new"
       UserData:
         Fn::Base64: |       
             Content-Type: multipart/mixed; boundary="//"
@@ -161,9 +166,16 @@ Resources:
                 
             #!/bin/bash
             sudo rm -r /var/lib/cloud/instances/            
-            su - ubuntu
+            su - ubuntu            
+            echo Creating swapfile
+            fallocate -l 3G /swapfile
+            chmod 600 /swapfile
+            mkswap  /swapfile
+            swapon /swapfile
+            swapon  --show
+            free -h
             export HOME=/home/ubuntu
-            export NPM_CONFIG_PREFIX=$HOME/.npm-global
+            export NPM_CONFIG_PREFIX=$HOME/.npm-global            
             sudo apt-get update -y
             sudo apt install -y nginx
             /bin/echo 'server {
@@ -171,9 +183,12 @@ Resources:
               listen [::]:80 default_server;
               server_name _;
               location / {
-                      proxy_pass http://127.0.0.1:3000;
-                    }
-              }' > /etc/nginx/sites-enabled/default 
+                  proxy_pass http://127.0.0.1:3000;
+              }
+              location /api/ {
+                  proxy_pass http://127.0.0.1:3005/;
+              }
+            }' > /etc/nginx/sites-enabled/default 
             sudo service nginx restart          
             curl -fsSL https://deb.nodesource.com/setup_16.x | sudo -E bash - &&\
             sudo apt-get install -y nodejs                          
@@ -181,28 +196,74 @@ Resources:
               /bin/mkdir $NPM_CONFIG_PREFIX      
               echo "export PATH=$NPM_CONFIG_PREFIX/bin:$PATH" >> $HOME/.profile
               echo "npm config set prefix '$NPM_CONFIG_PREFIX'" >> $HOME/.profile
+              cp $HOME/.profile $HOME/.profile.save
               source $HOME/.profile
               echo Installing required node packages
               echo Install pm2
-              npm i -g pm2
-              echo Install yarn
-              npm install -g yarn                
+              npm i -g pm2                          
             fi            
             --//--
+
+  ElasticIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      InstanceId: !Ref MyEC2Instance
+      Tags:
+         - Key: Name
+           Value: !Sub "${AWS::StackName}-ElasticIP"
+  
+  InstanceProfileEc2ForRole:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub "${AWS::StackName}-InstanceProfileEc2ForRole"
+      Roles:
+        - !Ref IAMRoleForEC2
+        
+  IAMRoleForEC2:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-RoleAllowEc2ConnectRDS"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: !Sub "${AWS::StackName}-PolicyAllowConnectRDSToEC2AndGetSecret"
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: 
+                  - rds-db:connect              
+                Resource:
+                  - !GetAtt RDSDBInstance.DBInstanceArn
+
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource:
+                  - !Ref SecretArn
+
   LoadBalancer:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
     Properties:
-      Name: test-load-balancer
+      Name: !Sub "${AWS::StackName}-loadBalancer"
       Subnets:
         - !Ref SubnetPublicTest1
         - !Ref SubnetPublicTest2
       SecurityGroups:
         - !Ref MySecurityGroup
+        - !Ref TestDBSecurityGroup
+        
 
   TestDBSubnetGroup:
     Type: AWS::RDS::DBSubnetGroup
     Properties:
       DBSubnetGroupDescription: My DB subnet group
+      DBSubnetGroupName: !Sub "${AWS::StackName}-DBSubnetGroup"
       SubnetIds:
         - !Ref SubnetPublicTest1
         - !Ref SubnetPublicTest2
@@ -210,9 +271,15 @@ Resources:
   TestDBSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
+      GroupName: !Sub "${AWS::StackName}-DatabaseSecurityGroup"
       GroupDescription: Security group for RDS PostgreSQL instance
       VpcId: !Ref TestVPC
       SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
         - IpProtocol: tcp
           FromPort: 5432
           ToPort: 5432
@@ -233,12 +300,14 @@ Resources:
       DBSubnetGroupName: !Ref TestDBSubnetGroup
       DBInstanceClass: db.t3.micro
       StorageType: gp2
-      PubliclyAccessible: true
+      PubliclyAccessible: false
       EnableIAMDatabaseAuthentication: true
       Tags:
         - Key: !Ref InitialTestRDSIdentifierKey
           Value: !Ref InitialTestRDSIdentifierValue
-  
+        - Key: Stack
+          Value: !Sub "${AWS::StackName}-RDS"  
+
   BindSecretWithDb:
     Type: AWS::SecretsManager::SecretTargetAttachment
     Properties: 
@@ -251,7 +320,7 @@ Resources:
   CloudTrailBucket:
     Type: AWS::S3::Bucket    
     Properties:
-      BucketName: test-for-cloudtrail-bucket-test
+      BucketName: !Sub "${AWS::StackName}-cloudtrail-bucket"
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
       LifecycleConfiguration:
@@ -260,7 +329,7 @@ Resources:
             Status: Enabled
             ExpirationInDays: 1
 
-  CloudTrailBucketPolicy:
+  BucketForCloudTrailPolicy:
     Type: AWS::S3::BucketPolicy
     Properties:
       Bucket: !Ref CloudTrailBucket
@@ -290,7 +359,7 @@ Resources:
   TestCloudTrail:
     Type: AWS::CloudTrail::Trail
     Properties:
-      TrailName: test-cloudtrail-trail
+      TrailName: !Sub "${AWS::StackName}-cloudtrail-trail"
       S3BucketName: !Ref CloudTrailBucket
       IsLogging: true
       EnableLogFileValidation: false
@@ -300,7 +369,7 @@ Resources:
   MyEventBridgeRule:
     Type: AWS::Events::Rule
     Properties:
-      Name: test_event_bridge_rule
+      Name: !Sub "${AWS::StackName}-eventBridgeRule"
       Description: My EventBridge Rule
       EventPattern:
         source:
@@ -334,7 +403,7 @@ Resources:
   MyLambdaFunction:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: MyLambdaFunction
+      FunctionName: !Sub "${AWS::StackName}-LambdaFunctionUpdateRDSCredentialSecretChange"
       Runtime: python3.9
       Handler: index.lambda_handler
       Code:
@@ -438,7 +507,7 @@ Resources:
   TestLambdaRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: TestLambdaRoleName
+      RoleName: !Sub "${AWS::StackName}-RoleLambdaUpdateRDSCredentials"
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -449,7 +518,7 @@ Resources:
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
       Policies:
-        - PolicyName: MyLambdaPolicy
+        - PolicyName: !Sub "${AWS::StackName}-PolicyRoleLambdaUpdateRDSCredentials"
           PolicyDocument:
             Version: "2012-10-17"
             Statement:

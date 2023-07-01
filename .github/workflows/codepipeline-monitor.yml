@@ -1,0 +1,47 @@
+name: CodePipeline Monitor
+on:
+    push:
+        branches:
+          - main
+
+jobs:
+  monitor:    
+    runs-on: ubuntu-latest   
+    permissions:
+        id-token: write   # This is required for requesting the JWT
+        contents: read    # This is required for actions/checkout
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+            role-to-assume: ${{ secrets.ROLE_TO_ASSUME }}
+            aws-region: ${{ secrets.REGION }}
+
+      - name: Get CodePipeline status
+        run: |
+            execution_id=$(aws codepipeline list-pipeline-executions --pipeline-name ${{ secrets.CODEPIPELINE_NAME }} --query 'pipelineExecutionSummaries[0].pipelineExecutionId' --output text)
+  
+
+            # Wait until the pipeline execution is finished.
+            while true; do
+                execution_status=$(aws codepipeline get-pipeline-execution --pipeline-name ${{ secrets.CODEPIPELINE_NAME }} --pipeline-execution-id $execution_id --query 'pipelineExecution.status' --output text)
+
+                if [[ $execution_status == "InProgress" ]]; then
+                    echo "Execution in progress..."
+                    sleep 3  
+                elif [[ $execution_status == "Succeeded" ]]; then
+                    echo "Successful execution!"
+                    break
+                else
+                    echo "Pipeline execution failed: $execution_status"
+                    exit 1
+                fi
+            done
+
+            echo "Synchronization with CodePipeline successfully completed."
+
+
+            
